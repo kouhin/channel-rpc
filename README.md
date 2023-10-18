@@ -1,2 +1,96 @@
-# channel-rpc
-Communicate Seamlessly with Channel Messaging API and JSON-RPC
+# channel-rpc: Communicate Seamlessly with Channel Messaging API and JSON-RPC
+
+[![GitHub License](https://img.shields.io/badge/license-MIT-brightgreen.svg)](https://github.com/yourusername/channel-rpc/blob/main/LICENSE)
+
+Channel-rpc is a TypeScript library that simplifies communication between different windows or iframes using the Channel Messaging API and JSON-RPC. This library is designed to make inter-window communication a breeze, ensuring that only windows with matching `channelId` can exchange data.
+
+## Status
+
+WIP
+
+## Features
+
+- **Simple and Lightweight**: A minimalistic library that abstracts away the complexities of Channel Messaging and JSON-RPC.
+- **Strongly Typed**: Leverages TypeScript to ensure type safety in your communications.
+- **Secure**: Channels can only communicate with windows or iframes having the same `channelId`.
+
+## Installation
+
+To get started with `channel-rpc`, you can install it via npm:
+
+```shell
+npm install channel-rpc
+```
+
+## Usage
+
+### In the Main Window (main.ts)
+
+```typescript
+import { ChannelServer } from "channel-rpc";
+
+// Define your message handlers
+const handler = {
+  add: (a: number, b: number): number => a + b,
+};
+
+// Create a ChannelServer instance
+const server = new ChannelServer({
+  channelId: "channel-1", // Must match the channelId in the child window
+  source: window, // Source window for listening to handshake messages
+  handler: handler, // Your message handler
+});
+
+export type HandlerType = typeof handler;
+```
+
+### In the Child Window (iframe.ts)
+
+```typescript
+import { ChannelClient } from "channel-rpc";
+
+import type { HandlerType } from "./main.ts";
+
+// Create a ChannelClient instance
+const client = new ChannelClient<HandlerType>({
+  target: window.top,
+  channel: "channel-1", // Must match the channelId in the main window
+});
+
+// Use the stub to call methods on the main window
+const result = await client.stub.add(2, 3); // result === 5
+```
+
+## API Reference
+
+### `ChannelServer`
+
+- `channelId` (string): A unique identifier for the channel.
+- `source` (Window): The source window to listen for handshake messages.
+- `handler` (object): The message handler object.
+
+### `ChannelClient`
+
+- `target` (Window): The target window for communication.
+- `channel` (string): The channel identifier to match with the main window.
+
+## License
+
+This project is licensed under the MIT License. See the [LICENSE](https://github.com/kouhin/channel-rpc/blob/main/LICENSE) file for details.
+
+## Issues and Support
+
+If you encounter any issues or have questions, please [open an issue](https://github.com/kouhin/channel-rpc/issues). We're here to help!
+
+## Release Notes
+
+Check out the [Release Notes](https://github.com/kouhin/channel-rpc/releases) for information on the latest updates and features.
+
+## Author
+
+- kouhin
+- [GitHub](https://github.com/kouhin)
+
+## Acknowledgments
+
+Give `channel-rpc` a try, and simplify your inter-window communication in web applications. We look forward to your feedback and contributions!
