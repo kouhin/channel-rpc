@@ -6,7 +6,7 @@
     "declaration": true,
     "module": "ESNext",
     "moduleResolution": "bundler",
-    "esModuleInterop": true,
+    "esModuleInterop": false,
     "strict": true,
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true
