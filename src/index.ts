@@ -82,7 +82,7 @@ function debug(...args: any[]) {
 
 const TIMEOUT_ERROR_MSG = "timeout" as const;
 
-export const Errors = {
+export const ChannelErrors = {
   InvalidRequest: {
     code: -32600,
     message: "Invalid Request",
@@ -102,7 +102,7 @@ export const Errors = {
 } as const;
 
 function createErrorResponse(
-  err: (typeof Errors)[keyof typeof Errors],
+  err: (typeof ChannelErrors)[keyof typeof ChannelErrors],
   id: string | null
 ): JsonRpcErrorResponse {
   return {
@@ -236,7 +236,7 @@ export class ChannelServer<T extends object> {
     );
     if (!isJsonRpcRequest(payload)) {
       const res: JsonRpcErrorResponse = createErrorResponse(
-        Errors.InvalidRequest,
+        ChannelErrors.InvalidRequest,
         (payload as any).id || null
       );
       debug(`[CHANNEL_RPC_SERVER][channel=${this.channelId}] reply`, res);
@@ -252,7 +252,7 @@ export class ChannelServer<T extends object> {
     const handler = this._handlers[payload.method];
     if (!handler) {
       const res: JsonRpcErrorResponse = createErrorResponse(
-        Errors.MethodNotFound,
+        ChannelErrors.MethodNotFound,
         payload.id || null
       );
       debug(
@@ -276,7 +276,7 @@ export class ChannelServer<T extends object> {
       this._sendResponse(source, res);
     } catch (err) {
       const res: JsonRpcErrorResponse = createErrorResponse(
-        Errors.InternalError,
+        ChannelErrors.InternalError,
         payload.id || null
       );
       debug(
@@ -357,7 +357,7 @@ export class ChannelClient<T extends object> {
       .catch((err) => {
         delete this._deferreds[id];
         if (err.message === TIMEOUT_ERROR_MSG) {
-          throw createErrorResponse(Errors.Timeout, id);
+          throw createErrorResponse(ChannelErrors.Timeout, id);
         }
         throw err;
       });

@@ -10,6 +10,7 @@ Channel-rpc is a TypeScript library that simplifies JSON-RPC communication betwe
 - **Strongly Typed**: Leverages TypeScript to ensure type safety in your communications.
 - **Secure**: Channels can only communicate with windows or iframes having the same `channelId`, and optionally validate the source origin.
 - **Controlled Communication**: Utilize the `start()` and `stop()` methods to manage when the server accepts messages.
+- **Error Handling**: Error responses from `client.stub` conform to the JSON-RPC standard, including well-defined error codes and messages.
 
 ## Installation
 
@@ -47,7 +48,7 @@ export type HandlerType = typeof handler;
 ### In the Child Window (iframe.ts)
 
 ```typescript
-import { ChannelClient } from "channel-rpc";
+import { ChannelClient, ChannelErrors } from "channel-rpc";
 
 import type { HandlerType } from "./main.ts";
 
@@ -58,7 +59,15 @@ const client = new ChannelClient({
 });
 
 // Use the stub to call methods on the main window
-const result = await client.stub.add(2, 3); // result === 5
+try {
+  const result = await client.stub.add(2, 3);
+} catch (error) {
+  if (error.code === ChannelErrors.MethodNotFound.code) {
+    // Handle the "Method not found" error
+  } else if (error.code === ChannelErrors.InvalidRequest.code) {
+    // Handle the "Invalid Request" error
+  }
+}
 ```
 
 ## API Reference
@@ -75,6 +84,13 @@ const result = await client.stub.add(2, 3); // result === 5
 
 - `target` (Window): The target window for communication.
 - `channel` (string): The channel identifier to match with the main window.
+
+### `ChannelErrors`
+
+- `InvalidRequest`: Error object representing an "Invalid Request."
+- `MethodNotFound`: Error object representing a "Method not found."
+- `InternalError`: Error object representing an "Internal error."
+- `Timeout`: Error object representing a "Timeout."
 
 ## License
 
