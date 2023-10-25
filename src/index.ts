@@ -18,7 +18,7 @@ interface JsonRpcErrorResponse {
     message: string;
     data?: any;
   };
-  id: string;
+  id: string | null;
 }
 
 const MessageTypes = {
@@ -80,6 +80,41 @@ function debug(...args: any[]) {
   console.log(...args);
 }
 
+const TIMEOUT_ERROR_MSG = "timeout" as const;
+
+export const Errors = {
+  InvalidRequest: {
+    code: -32600,
+    message: "Invalid Request",
+  },
+  MethodNotFound: {
+    code: -32601,
+    message: "Method not found",
+  },
+  InternalError: {
+    code: -32603,
+    message: "Internal error",
+  },
+  Timeout: {
+    code: -32000,
+    message: "Timeout",
+  },
+} as const;
+
+function createErrorResponse(
+  err: (typeof Errors)[keyof typeof Errors],
+  id: string | null
+): JsonRpcErrorResponse {
+  return {
+    jsonrpc: "2.0",
+    error: {
+      code: err.code,
+      message: err.message,
+    },
+    id,
+  };
+}
+
 function defer<T>(timeout: number): Deferred<T> {
   const deferred = {
     resolve: (_value: T) => {},
@@ -89,7 +124,7 @@ function defer<T>(timeout: number): Deferred<T> {
   deferred.promise = new Promise<T>((resolve, reject) => {
     const t = timeout
       ? setTimeout(() => {
-          reject(new Error("timeout"));
+          reject(new Error(TIMEOUT_ERROR_MSG));
         }, timeout)
       : undefined;
 
@@ -200,14 +235,10 @@ export class ChannelServer<T extends object> {
       payload
     );
     if (!isJsonRpcRequest(payload)) {
-      const res: JsonRpcErrorResponse = {
-        jsonrpc: "2.0",
-        error: {
-          code: -32600,
-          message: "Invalid Request",
-        },
-        id: (payload as any).id || null,
-      };
+      const res: JsonRpcErrorResponse = createErrorResponse(
+        Errors.InvalidRequest,
+        (payload as any).id || null
+      );
       debug(`[CHANNEL_RPC_SERVER][channel=${this.channelId}] reply`, res);
       this._sendResponse(source, res);
       return;
@@ -220,14 +251,10 @@ export class ChannelServer<T extends object> {
     );
     const handler = this._handlers[payload.method];
     if (!handler) {
-      const res: JsonRpcErrorResponse = {
-        jsonrpc: "2.0",
-        error: {
-          code: -32601,
-          message: "Method not found",
-        },
-        id: payload.id,
-      };
+      const res: JsonRpcErrorResponse = createErrorResponse(
+        Errors.MethodNotFound,
+        payload.id || null
+      );
       debug(
         `[CHANNEL_RPC_SERVER][channel=${this.channelId}] SEND_RESPONSE`,
         res
@@ -248,15 +275,10 @@ export class ChannelServer<T extends object> {
       );
       this._sendResponse(source, res);
     } catch (err) {
-      const res: JsonRpcErrorResponse = {
-        jsonrpc: "2.0",
-        error: {
-          code: -32603,
-          message: "Internal error",
-          data: err,
-        },
-        id: payload.id,
-      };
+      const res: JsonRpcErrorResponse = createErrorResponse(
+        Errors.InternalError,
+        payload.id || null
+      );
       debug(
         `[CHANNEL_RPC_SERVER][channel=${this.channelId}] SEND_RESPONSE`,
         res
@@ -334,6 +356,9 @@ export class ChannelClient<T extends object> {
       })
       .catch((err) => {
         delete this._deferreds[id];
+        if (err.message === TIMEOUT_ERROR_MSG) {
+          throw createErrorResponse(Errors.Timeout, id);
+        }
         throw err;
       });
     this._deferreds[id] = deferred;
@@ -360,6 +385,7 @@ export class ChannelClient<T extends object> {
       this._deferreds[id]?.resolve(result);
     } else if (isJsonRpcErrorResponse(payload)) {
       const { id, error } = payload;
+      if (!id) throw error;
       this._deferreds[id]?.reject(error);
     } else {
       const err = new Error(
