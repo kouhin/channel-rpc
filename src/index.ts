@@ -70,6 +70,15 @@ interface Deferred<T> {
   reject: (reason: any) => void;
   promise: Promise<T>;
 }
+// get debugEnabled from localStorage
+let debugEnabled = false;
+try {
+  debugEnabled = !!localStorage.getItem("channel-rpc-debug");
+} catch (err) {}
+function debug(...args: any[]) {
+  if (!debugEnabled) return;
+  console.log(...args);
+}
 
 function defer<T>(timeout: number): Deferred<T> {
   const deferred = {
@@ -160,10 +169,11 @@ export class ChannelServer<T extends object> {
     }
 
     // DEBUG
-    console.log(
-      `[CHANNEL_RPC_SERVER][channel=${this.channelId}] ChannelRpcRequest`,
+    debug(
+      `[CHANNEL_RPC_SERVER][channel=${this.channelId}] RECEIVE_REQUEST`,
       ev.data
     );
+
     this._handleRpcRequest(ev.source, ev.data.payload);
   };
 
@@ -185,8 +195,8 @@ export class ChannelServer<T extends object> {
     source: MessageEventSource,
     payload: unknown
   ): Promise<void> {
-    console.log(
-      `[CHANNEL_RPC_SERVER][channel=${this.channelId}] handleMessage`,
+    debug(
+      `[CHANNEL_RPC_SERVER][channel=${this.channelId}] HANDLE_REQUEST_RPC`,
       payload
     );
     if (!isJsonRpcRequest(payload)) {
@@ -198,14 +208,15 @@ export class ChannelServer<T extends object> {
         },
         id: (payload as any).id || null,
       };
-      console.log(`[CHANNEL_RPC_SERVER][channel=${this.channelId}] reply`, res);
+      debug(`[CHANNEL_RPC_SERVER][channel=${this.channelId}] reply`, res);
       this._sendResponse(source, res);
       return;
     }
 
-    console.log(
-      `[CHANNEL_RPC_SERVER][channel=${this.channelId}] handleMessage method[${payload.method}]`,
-      this._handlers
+    debug(
+      `[CHANNEL_RPC_SERVER][channel=${this.channelId}] HANDLE_REQUEST_RPC method[${payload.method}]`,
+      this._handlers,
+      payload
     );
     const handler = this._handlers[payload.method];
     if (!handler) {
@@ -217,7 +228,10 @@ export class ChannelServer<T extends object> {
         },
         id: payload.id,
       };
-      console.log(`[CHANNEL_RPC_SERVER][channel=${this.channelId}] reply`, res);
+      debug(
+        `[CHANNEL_RPC_SERVER][channel=${this.channelId}] SEND_RESPONSE`,
+        res
+      );
       this._sendResponse(source, res);
       return;
     }
@@ -228,7 +242,10 @@ export class ChannelServer<T extends object> {
         result,
         id: payload.id,
       };
-      console.log(`[CHANNEL_RPC_SERVER][channel=${this.channelId}] reply`, res);
+      debug(
+        `[CHANNEL_RPC_SERVER][channel=${this.channelId}] SEND_RESPONSE`,
+        res
+      );
       this._sendResponse(source, res);
     } catch (err) {
       const res: JsonRpcErrorResponse = {
@@ -240,7 +257,10 @@ export class ChannelServer<T extends object> {
         },
         id: payload.id,
       };
-      console.log(`[CHANNEL_RPC_SERVER][channel=${this.channelId}] reply`, res);
+      debug(
+        `[CHANNEL_RPC_SERVER][channel=${this.channelId}] SEND_RESPONSE`,
+        res
+      );
       this._sendResponse(source, res);
     }
   }
@@ -277,7 +297,11 @@ export class ChannelClient<T extends object> {
     this.stub = new Proxy({} as RemoteObject<T>, {
       get: (_target, prop) => {
         return (...args: unknown[]) => {
-          console.log("[CHANNEL_RPC][CLIENT] invoke stub method", prop, args);
+          debug(
+            `[CHANNEL_RPC_CLIENT][channel=${channelId}] INVOKE`,
+            prop,
+            args
+          );
           return this._sendRequest(String(prop), args);
         };
       },
@@ -289,8 +313,8 @@ export class ChannelClient<T extends object> {
         return;
       }
       // DEBUG
-      console.log(
-        `[CHANNEL_RPC_CLIENT][channel=${this.channelId}] ChannelRpcResponse`,
+      debug(
+        `[CHANNEL_RPC_CLIENT][channel=${this.channelId}] HANDLE_RESPONSE`,
         ev.data
       );
       this._handleRpcResponse(ev.data.payload);
@@ -319,7 +343,7 @@ export class ChannelClient<T extends object> {
       params: args,
       id,
     };
-    console.log("[CHANNEL_RPC_CLIENT] Send invoke", req);
+    debug("[CHANNEL_RPC_CLIENT] SEND_REQUEST", req);
     const channelReq: ChannelRpcRequest = {
       type: MessageTypes.ChannelRpcRequest,
       channelId: this.channelId,
@@ -330,7 +354,7 @@ export class ChannelClient<T extends object> {
   }
 
   private _handleRpcResponse(payload: unknown) {
-    console.log("[CHANNEL_RPC_CLIENT] handleRpcResponse", payload);
+    debug("[CHANNEL_RPC_CLIENT] HANDLE_RESPONSE_RPC", payload);
     if (isJsonRpcSuccessResponse(payload)) {
       const { id, result } = payload;
       this._deferreds[id]?.resolve(result);
@@ -338,11 +362,13 @@ export class ChannelClient<T extends object> {
       const { id, error } = payload;
       this._deferreds[id]?.reject(error);
     } else {
-      throw new Error(
+      const err = new Error(
         `[CHANNEL_RPC_CLIENT][channel=${
           this.channelId
         }] UNKNOWN_RESPONSE: ${JSON.stringify(payload)}`
       );
+      debug("[CHANNEL_RPC_CLIENT] HANDLE_RESPONSE_RPC, ERROR", err);
+      throw err;
     }
   }
 }
