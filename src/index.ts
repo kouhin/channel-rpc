@@ -22,9 +22,29 @@ interface JsonRpcErrorResponse {
 }
 
 const MessageTypes = {
-  HandShakeRequest: "@channel-rpc/HANDSHAKE_REQUEST",
-  HandShakeResponse: "@channel-rpc/HANDSHAKE_RESPONSE",
+  ChannelRpcRequest: "@channel-rpc/REQUEST",
+  ChannelRpcResponse: "@channel-rpc/RESPONSE",
 } as const;
+
+interface ChannelRpcRequest {
+  type: typeof MessageTypes.ChannelRpcRequest;
+  channelId: string;
+  payload: unknown;
+}
+
+interface ChannelRpcResponse {
+  type: typeof MessageTypes.ChannelRpcResponse;
+  channelId: string;
+  payload: unknown;
+}
+
+function isChannelRpcRequest(data: any): data is ChannelRpcRequest {
+  return data && data.type === MessageTypes.ChannelRpcRequest;
+}
+
+function isChannelRpcResponse(data: any): data is ChannelRpcResponse {
+  return data && data.type === MessageTypes.ChannelRpcResponse;
+}
 
 function isJsonRpcRequest(data: any): data is JsonRpcRequest {
   return data && data.jsonrpc === "2.0" && typeof data.method === "string";
@@ -78,17 +98,15 @@ function defer<T>(timeout: number): Deferred<T> {
 
 export class ChannelServer<T extends object> {
   readonly channelId: string;
-  readonly source: WindowProxy;
-  readonly channel: MessageChannel;
 
   private readonly _handlers: Record<string, (...args: unknown[]) => unknown>;
 
   constructor(options: {
     channelId: string;
-    source: WindowProxy;
+    sourceOrigin?: string;
     handler?: T;
   }) {
-    const { source, channelId, handler } = options;
+    const { sourceOrigin, channelId, handler } = options;
     if (!channelId) throw new Error("id is required");
 
     this.channelId = channelId;
@@ -102,60 +120,72 @@ export class ChannelServer<T extends object> {
       }
     });
 
-    this.channel = new MessageChannel();
-    this.source = source || window;
-    this.source.addEventListener("message", (ev) => {
-      // DEBUG
-      if (ev.data.type === MessageTypes.HandShakeRequest) {
-        console.log("[CHANNEL_RPC][SERVER]HandShakeRequest", ev.data);
+    const self = typeof globalThis === "object" ? globalThis : window;
+    self.addEventListener("message", (ev) => {
+      if (!isChannelRpcRequest(ev.data) || ev.data.channelId !== channelId) {
+        return;
+      }
+      if (sourceOrigin && sourceOrigin !== "*" && sourceOrigin !== ev.origin) {
+        throw new Error(
+          `[CHANNEL_RPC_SERVER][channel=${this.channelId}] Invalid origin: ${ev.origin}`
+        );
+      }
+      if (!ev.source) {
+        throw new Error(
+          `[CHANNEL_RPC_SERVER][channel=${this.channelId}] event.source is null`
+        );
       }
 
-      // Send back the port to the source window
-      if (
-        ev.data &&
-        ev.data.type === MessageTypes.HandShakeRequest &&
-        ev.data.channelId === this.channelId
-      ) {
-        console.log(
-          "[CHANNEL_RPC][SERVER]HandShakeRequest Sendback",
-          this.channel.port2
-        );
-        (ev.source as WindowProxy).postMessage(
-          {
-            type: MessageTypes.HandShakeResponse,
-            channelId: this.channelId,
-          },
-          "*",
-          [this.channel.port2]
-        );
-      }
+      // DEBUG
+      console.log(
+        `[CHANNEL_RPC_SERVER][channel=${this.channelId}] ChannelRpcRequest`,
+        ev.data
+      );
+      this._handleRpcRequest(ev.source, ev.data.payload);
     });
-    this.channel.port1.onmessage = this._handleMessage.bind(this);
   }
 
-  private async _handleMessage(ev: MessageEvent): Promise<void> {
-    console.log("[CHANNEL_RPC][SERVER]HandShakeRequest handleMessage", ev);
-    const data = ev.data;
-    if (!isJsonRpcRequest(data)) {
+  private async _sendResponse(
+    source: MessageEventSource,
+    payload: JsonRpcSuccessResponse | JsonRpcErrorResponse
+  ) {
+    const res: ChannelRpcResponse = {
+      type: MessageTypes.ChannelRpcResponse,
+      channelId: this.channelId,
+      payload,
+    };
+    source.postMessage(res, {
+      targetOrigin: "*",
+    });
+  }
+
+  private async _handleRpcRequest(
+    source: MessageEventSource,
+    payload: unknown
+  ): Promise<void> {
+    console.log(
+      `[CHANNEL_RPC_SERVER][channel=${this.channelId}] handleMessage`,
+      payload
+    );
+    if (!isJsonRpcRequest(payload)) {
       const res: JsonRpcErrorResponse = {
         jsonrpc: "2.0",
         error: {
           code: -32600,
           message: "Invalid Request",
         },
-        id: data.id || null,
+        id: (payload as any).id || null,
       };
-      console.log("[CHANNEL_RPC][SERVER]HandShakeRequest reply", res);
-      this.channel.port1.postMessage(res);
+      console.log(`[CHANNEL_RPC_SERVER][channel=${this.channelId}] reply`, res);
+      this._sendResponse(source, res);
       return;
     }
 
     console.log(
-      "[CHANNEL_RPC][SERVER]HandShakeRequest handleMessage method",
-      data.method,
+      `[CHANNEL_RPC_SERVER][channel=${this.channelId}] handleMessage method[${payload.method}]`,
       this._handlers
     );
-    const handler = this._handlers[data.method];
+    const handler = this._handlers[payload.method];
     if (!handler) {
       const res: JsonRpcErrorResponse = {
         jsonrpc: "2.0",
@@ -163,21 +193,21 @@ export class ChannelServer<T extends object> {
           code: -32601,
           message: "Method not found",
         },
-        id: data.id,
+        id: payload.id,
       };
-      console.log("[CHANNEL_RPC][SERVER]HandShakeRequest reply", res);
-      this.channel.port1.postMessage(res);
+      console.log(`[CHANNEL_RPC_SERVER][channel=${this.channelId}] reply`, res);
+      this._sendResponse(source, res);
       return;
     }
     try {
-      const result = await handler(...(data.params || []));
+      const result = await handler(...(payload.params || []));
       const res: JsonRpcSuccessResponse = {
         jsonrpc: "2.0",
         result,
-        id: data.id,
+        id: payload.id,
       };
-      console.log("[CHANNEL_RPC][SERVER]HandShakeRequest reply", res);
-      this.channel.port1.postMessage(res);
+      console.log(`[CHANNEL_RPC_SERVER][channel=${this.channelId}] reply`, res);
+      this._sendResponse(source, res);
     } catch (err) {
       const res: JsonRpcErrorResponse = {
         jsonrpc: "2.0",
@@ -186,10 +216,10 @@ export class ChannelServer<T extends object> {
           message: "Internal error",
           data: err,
         },
-        id: data.id,
+        id: payload.id,
       };
-      console.log("[CHANNEL_RPC][SERVER]HandShakeRequest reply", res);
-      this.channel.port1.postMessage(res);
+      console.log(`[CHANNEL_RPC_SERVER][channel=${this.channelId}] reply`, res);
+      this._sendResponse(source, res);
     }
   }
 }
@@ -206,7 +236,6 @@ export class ChannelClient<T extends object> {
   readonly target: WindowProxy;
 
   private readonly _deferreds: Record<string, Deferred<unknown> | undefined>;
-  private readonly _deferredPort: Deferred<MessagePort>;
   private readonly _timeout: number;
 
   constructor(options: {
@@ -220,7 +249,6 @@ export class ChannelClient<T extends object> {
 
     this.target = target;
     this.channelId = channelId;
-    this._deferredPort = defer(0);
     this._deferreds = {};
     this._timeout = timeout || 1000;
 
@@ -233,16 +261,24 @@ export class ChannelClient<T extends object> {
       },
     });
 
-    this._startHandshake();
+    const self = typeof globalThis === "object" ? globalThis : window;
+    self.addEventListener("message", (ev) => {
+      if (!isChannelRpcResponse(ev.data) || ev.data.channelId !== channelId) {
+        return;
+      }
+      // DEBUG
+      console.log(
+        `[CHANNEL_RPC_CLIENT][channel=${this.channelId}] ChannelRpcResponse`,
+        ev.data
+      );
+      this._handleRpcResponse(ev.data.payload);
+    });
   }
 
   private async _sendRequest(
     method: string,
     args: unknown[]
   ): Promise<unknown> {
-    console.log("[CHANNEL_RPC][CLIENT] invoke fetching port");
-    const port = await this._deferredPort.promise;
-    console.log("[CHANNEL_RPC][CLIENT] invoke fetch port", port);
     const id = generateUUID();
     const deferred = defer(this._timeout);
     deferred.promise
@@ -261,62 +297,30 @@ export class ChannelClient<T extends object> {
       params: args,
       id,
     };
-    console.log("[CHANNEL_RPC][CLIENT] Send invoke", req);
-    port.postMessage(req);
+    console.log("[CHANNEL_RPC_CLIENT] Send invoke", req);
+    const channelReq: ChannelRpcRequest = {
+      type: MessageTypes.ChannelRpcRequest,
+      channelId: this.channelId,
+      payload: req,
+    };
+    this.target.postMessage(channelReq, "*");
     return deferred.promise;
   }
 
-  private _portMessageHandler(ev: MessageEvent) {
-    console.log("[CHANNEL_RPC][CLIENT] portMessageHandler", ev);
-    const { data } = ev;
-    if (isJsonRpcSuccessResponse(data)) {
-      const { id, result } = data;
+  private _handleRpcResponse(payload: unknown) {
+    console.log("[CHANNEL_RPC_CLIENT] handleRpcResponse", payload);
+    if (isJsonRpcSuccessResponse(payload)) {
+      const { id, result } = payload;
       this._deferreds[id]?.resolve(result);
-    } else if (isJsonRpcErrorResponse(data)) {
-      const { id, error } = data;
+    } else if (isJsonRpcErrorResponse(payload)) {
+      const { id, error } = payload;
       this._deferreds[id]?.reject(error);
     } else {
-      console.warn("Unknown message", data);
-    }
-  }
-
-  private _startHandshake() {
-    const self = typeof globalThis === "object" ? globalThis : window;
-
-    let port: MessagePort;
-    const handler = (ev: MessageEvent) => {
-      if (
-        ev.data &&
-        ev.data.type === MessageTypes.HandShakeResponse &&
-        ev.data.channelId === this.channelId &&
-        ev.ports.length
-      ) {
-        console.log("[CHANNEL_RPC][CLIENT] receive port", ev);
-        self.removeEventListener("message", handler);
-
-        port = ev.ports[0];
-        console.log("[CHANNEL_RPC][CLIENT] connected", port);
-        this._deferredPort.resolve(port);
-        port.onmessage = this._portMessageHandler.bind(this);
-      }
-    };
-    self.addEventListener("message", handler);
-
-    let interval = setInterval(() => {
-      // DEBUG
-      console.info("[CLIENT]HandShakeRequest", this.channelId, port);
-      if (port) {
-        clearInterval(interval);
-        return;
-      }
-
-      this.target.postMessage(
-        {
-          type: MessageTypes.HandShakeRequest,
-          channelId: this.channelId,
-        },
-        "*"
+      throw new Error(
+        `[CHANNEL_RPC_CLIENT][channel=${
+          this.channelId
+        }] UNKNOWN_RESPONSE: ${JSON.stringify(payload)}`
       );
-    }, 100);
+    }
   }
 }
