@@ -98,6 +98,8 @@ function defer<T>(timeout: number): Deferred<T> {
 
 export class ChannelServer<T extends object> {
   readonly channelId: string;
+  readonly sourceOrigin?: string;
+  private _unlisten: (() => void) | undefined = undefined;
 
   private readonly _handlers: Record<string, (...args: unknown[]) => unknown>;
 
@@ -110,6 +112,7 @@ export class ChannelServer<T extends object> {
     if (!channelId) throw new Error("id is required");
 
     this.channelId = channelId;
+    this.sourceOrigin = sourceOrigin;
     this._handlers = {};
 
     const h = handler || {};
@@ -119,31 +122,50 @@ export class ChannelServer<T extends object> {
         this._handlers[method] = fn.bind(h);
       }
     });
-
-    const self = typeof globalThis === "object" ? globalThis : window;
-    self.addEventListener("message", (ev) => {
-      if (!isChannelRpcRequest(ev.data) || ev.data.channelId !== channelId) {
-        return;
-      }
-      if (sourceOrigin && sourceOrigin !== "*" && sourceOrigin !== ev.origin) {
-        throw new Error(
-          `[CHANNEL_RPC_SERVER][channel=${this.channelId}] Invalid origin: ${ev.origin}`
-        );
-      }
-      if (!ev.source) {
-        throw new Error(
-          `[CHANNEL_RPC_SERVER][channel=${this.channelId}] event.source is null`
-        );
-      }
-
-      // DEBUG
-      console.log(
-        `[CHANNEL_RPC_SERVER][channel=${this.channelId}] ChannelRpcRequest`,
-        ev.data
-      );
-      this._handleRpcRequest(ev.source, ev.data.payload);
-    });
   }
+
+  public start(): void {
+    if (this._unlisten) return;
+    const self = typeof globalThis === "object" ? globalThis : window;
+    self.addEventListener("message", this._handleMessage);
+    this._unlisten = (): void => {
+      self.removeEventListener("message", this._handleMessage);
+    };
+  }
+
+  public stop(): void {
+    if (this._unlisten) {
+      this._unlisten();
+      this._unlisten = undefined;
+    }
+  }
+
+  private _handleMessage: (ev: MessageEvent) => void = (ev) => {
+    if (!isChannelRpcRequest(ev.data) || ev.data.channelId !== this.channelId) {
+      return;
+    }
+    if (
+      this.sourceOrigin &&
+      this.sourceOrigin !== "*" &&
+      this.sourceOrigin !== ev.origin
+    ) {
+      throw new Error(
+        `[CHANNEL_RPC_SERVER][channel=${this.channelId}] Invalid origin: ${ev.origin}`
+      );
+    }
+    if (!ev.source) {
+      throw new Error(
+        `[CHANNEL_RPC_SERVER][channel=${this.channelId}] event.source is null`
+      );
+    }
+
+    // DEBUG
+    console.log(
+      `[CHANNEL_RPC_SERVER][channel=${this.channelId}] ChannelRpcRequest`,
+      ev.data
+    );
+    this._handleRpcRequest(ev.source, ev.data.payload);
+  };
 
   private async _sendResponse(
     source: MessageEventSource,

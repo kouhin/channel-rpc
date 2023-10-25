@@ -1,14 +1,15 @@
-# channel-rpc: JSON-RPC over postMessage
+# channel-rpc: JSON-RPC over `postMessage`
 
 [![GitHub License](https://img.shields.io/badge/license-MIT-brightgreen.svg)](https://github.com/kouhin/channel-rpc/blob/main/LICENSE)
 
-Channel-rpc is a TypeScript library that simplifies communication between different windows or iframes using the `postMessage` API and JSON-RPC. This library is designed to make inter-window communication a breeze, ensuring that only windows with matching `channelId` can exchange data and optionally validating the source origin.
+Channel-rpc is a TypeScript library that simplifies JSON-RPC communication between different windows or iframes using the `postMessage` API. This library is designed to make inter-window communication a breeze, ensuring that only windows with matching `channelId` can exchange data and optionally validating the source origin.
 
 ## Features
 
 - **Simple and Lightweight**: A minimalistic library that abstracts away the complexities of `postMessage` and JSON-RPC.
 - **Strongly Typed**: Leverages TypeScript to ensure type safety in your communications.
 - **Secure**: Channels can only communicate with windows or iframes having the same `channelId`, and optionally validate the source origin.
+- **Controlled Communication**: Utilize the `start()` and `stop()` methods to manage when the server accepts messages.
 
 ## Installation
 
@@ -37,6 +38,9 @@ const server = new ChannelServer({
   sourceOrigin: "https://yourwebsite.com", // Optional source origin validation
 });
 
+// Start accepting messages
+server.start();
+
 export type HandlerType = typeof handler;
 ```
 
@@ -64,6 +68,8 @@ const result = await client.stub.add(2, 3); // result === 5
 - `channelId` (string): A unique identifier for the channel.
 - `handler` (object): The message handler object.
 - `sourceOrigin` (string, optional): The source origin to validate against.
+- `start()`: Starts accepting messages.
+- `stop()`: Stops accepting messages.
 
 ### `ChannelClient`
 
@@ -77,10 +83,6 @@ This project is licensed under the MIT License. See the [LICENSE](https://github
 ## Get Started
 
 To get started with `channel-rpc`, follow the installation and usage instructions provided above. Explore the examples folder for more usage examples.
-
-## Contributing
-
-We welcome contributions! Please see our [Contribution Guidelines](CONTRIBUTING.md) for more details.
 
 ## Issues and Support
 
