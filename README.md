@@ -2,13 +2,13 @@
 
 [![GitHub License](https://img.shields.io/badge/license-MIT-brightgreen.svg)](https://github.com/kouhin/channel-rpc/blob/main/LICENSE)
 
-Channel-rpc is a TypeScript library that simplifies JSON-RPC communication between different windows or iframes using the `postMessage` API. This library is designed to make inter-window communication a breeze, ensuring that only windows with matching `channelId` can exchange data and optionally validating the source origin.
+Channel-rpc is a TypeScript library that simplifies JSON-RPC communication between different windows or iframes using the `postMessage` API. This library is designed to make inter-window communication a breeze, ensuring that only windows with matching `channelId` can exchange data and optionally validating the allowed origins.
 
 ## Features
 
 - **Simple and Lightweight**: A minimalistic library that abstracts away the complexities of `postMessage` and JSON-RPC.
 - **Strongly Typed**: Leverages TypeScript to ensure type safety in your communications.
-- **Secure**: Channels can only communicate with windows or iframes having the same `channelId`, and optionally validate the source origin.
+- **Secure**: Channels can only communicate with windows or iframes having the same `channelId`, and optionally validate the allowed origins.
 - **Controlled Communication**: Utilize the `start()` and `stop()` methods to manage when the server accepts messages.
 - **Error Handling**: Error responses from `client.stub` conform to the JSON-RPC standard, including well-defined error codes and messages.
 
@@ -36,7 +36,7 @@ const handler = {
 const server = new ChannelServer({
   channelId: "channel-1", // Must match the channelId in the child window
   handler: handler, // Your message handler
-  sourceOrigin: "https://yourwebsite.com", // Optional source origin validation
+  allowOrigins: ["https://yourwebsite.com", "https://anotherwebsite.com"], // Optional allowed origins
 });
 
 // Start accepting messages
@@ -76,7 +76,7 @@ try {
 
 - `channelId` (string): A unique identifier for the channel.
 - `handler` (object): The message handler object.
-- `sourceOrigin` (string, optional): The source origin to validate against.
+- `allowOrigins` (string[], optional): An array of allowed origins.
 - `start()`: Starts accepting messages.
 - `stop()`: Stops accepting messages.
 

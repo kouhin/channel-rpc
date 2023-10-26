@@ -142,21 +142,23 @@ function defer<T>(timeout: number): Deferred<T> {
 
 export class ChannelServer<T extends object> {
   readonly channelId: string;
-  readonly sourceOrigin?: string;
+  readonly allowOrigins: string[];
+
   private _unlisten: (() => void) | undefined = undefined;
 
   private readonly _handlers: Record<string, (...args: unknown[]) => unknown>;
 
   constructor(options: {
     channelId: string;
-    sourceOrigin?: string;
+    allowOrigins?: string[];
     handler?: T;
   }) {
-    const { sourceOrigin, channelId, handler } = options;
+    const { allowOrigins, channelId, handler } = options;
     if (!channelId) throw new Error("id is required");
 
     this.channelId = channelId;
-    this.sourceOrigin = sourceOrigin;
+    this.allowOrigins =
+      allowOrigins && allowOrigins.indexOf("*") === -1 ? allowOrigins : [];
     this._handlers = {};
 
     const h = handler || {};
@@ -189,9 +191,8 @@ export class ChannelServer<T extends object> {
       return;
     }
     if (
-      this.sourceOrigin &&
-      this.sourceOrigin !== "*" &&
-      this.sourceOrigin !== ev.origin
+      this.allowOrigins.length > 0 &&
+      this.allowOrigins.indexOf(ev.origin) === -1
     ) {
       throw new Error(
         `[CHANNEL_RPC_SERVER][channel=${this.channelId}] Invalid origin: ${ev.origin}`
