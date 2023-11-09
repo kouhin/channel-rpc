@@ -51,11 +51,11 @@ function isJsonRpcRequest(data: any): data is JsonRpcRequest {
 }
 
 function isJsonRpcSuccessResponse(data: any): data is JsonRpcSuccessResponse {
-  return data && data.jsonrpc === "2.0" && typeof data.result !== "undefined";
+  return data && data.jsonrpc === "2.0" && "result" in data;
 }
 
 function isJsonRpcErrorResponse(data: any): data is JsonRpcErrorResponse {
-  return data && data.jsonrpc === "2.0" && typeof data.error !== "undefined";
+  return data && data.jsonrpc === "2.0" && "error" in data;
 }
 
 function generateUUID(): string {
