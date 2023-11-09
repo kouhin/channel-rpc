@@ -199,9 +199,11 @@ export class ChannelServer<T extends object> {
       );
     }
     if (!ev.source) {
-      throw new Error(
-        `[CHANNEL_RPC_SERVER][channel=${this.channelId}] event.source is null`
+      debug(
+        `[CHANNEL_RPC_SERVER][channel=${this.channelId}] event.source is null`,
+        ev
       );
+      return;
     }
 
     // DEBUG
