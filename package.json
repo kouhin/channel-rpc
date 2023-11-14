@@ -1,6 +1,6 @@
 {
   "name": "channel-rpc",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "description": "JSON-RPC over postMessage",
   "author": "kouhin",
   "type": "module",

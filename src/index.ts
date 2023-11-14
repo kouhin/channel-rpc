@@ -358,7 +358,7 @@ export class ChannelClient<T extends object> {
   ): Promise<unknown> {
     const id = generateUUID();
     const deferred = defer(this._timeout);
-    deferred.promise
+    const promise = deferred.promise
       .then((value) => {
         delete this._deferreds[id];
         return value;
@@ -384,7 +384,7 @@ export class ChannelClient<T extends object> {
       payload: req,
     };
     this.target.postMessage(channelReq, "*");
-    return deferred.promise;
+    return promise;
   }
 
   private _handleRpcResponse(payload: unknown) {
