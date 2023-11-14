@@ -365,6 +365,9 @@ export class ChannelClient<T extends object> {
       })
       .catch((err) => {
         delete this._deferreds[id];
+        if (err.message === TIMEOUT_ERROR_MSG) {
+          throw createErrorResponse(ChannelErrors.Timeout, id).error;
+        }
         throw err;
       });
     this._deferreds[id] = deferred;
