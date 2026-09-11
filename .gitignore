@@ -5,3 +5,9 @@ npm-debug.log
 *.swp
 *~
 /dist/
+/.build/
+/.artifacts/
+/coverage/
+/playwright-report/
+/test-results/
+*.tgz

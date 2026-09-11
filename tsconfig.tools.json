@@ -1,0 +1,11 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "rootDir": ".",
+    "target": "ESNext",
+    "resolveJsonModule": true,
+    "lib": ["ESNext", "DOM"],
+    "types": ["bun"]
+  },
+  "include": ["scripts", "test/unit", "test/browser", "playwright.config.ts"]
+}
