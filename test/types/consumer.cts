@@ -7,8 +7,20 @@ interface Handler {
 
 export function useChannel(target: WindowProxy) {
 	const handler: Handler = { add: (a, b) => a + b, greet: async (name) => `Hello ${name}` };
-	const server = new rpc.ChannelServer({ channelId: 'consumer', handler });
-	const client = new rpc.ChannelClient<Handler>({ channelId: server.channelId, target });
+	const traces: rpc.ChannelTraceEvent[] = [];
+	const onTrace: rpc.ChannelTraceHandler = (event) => {
+		traces.push(event);
+		// @ts-expect-error CommonJS trace payloads also require narrowing.
+		event.payload.params;
+	};
+	const server = new rpc.ChannelServer({ channelId: 'consumer', handler, onTrace });
+	const client = new rpc.ChannelClient<Handler>({
+		channelId: server.channelId,
+		target,
+		onTrace: async (event) => {
+			await onTrace(event);
+		}
+	});
 	const remote: rpc.RemoteObject<Handler> = client.stub;
 	const sum: Promise<number> = remote.add(2, 3);
 	const greeting: Promise<string> = remote.greet('world');

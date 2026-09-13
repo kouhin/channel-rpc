@@ -105,6 +105,7 @@ Registers an object's methods for callers on the selected channel.
 | `channelId` | `string` | Required | Non-empty channel identifier shared with the client. |
 | `handler` | `T` | `{}` | Object whose own enumerable function properties are registered as handlers. |
 | `allowOrigins` | `string[]` | `[]` | Exact origins allowed to send requests. An empty list or a list containing `'*'` permits any origin. |
+| `onTrace` | `ChannelTraceHandler` | Unset | Optional observer of raw requests, responses, and handler failures. See [Debugging](#debugging). |
 
 Handlers are registered at construction and bound to the supplied object, so
 method calls retain their `this` value. Class prototype methods are not registered.
@@ -126,6 +127,7 @@ Creates a client and starts listening for responses immediately.
 | `target` | `WindowProxy` | Required | The window hosting the server, such as `window.parent` or an iframe's `contentWindow`. |
 | `channelId` | `string` | Required | The server's channel identifier. |
 | `timeout` | `number` | `1000` | Request timeout in milliseconds. Use a positive value; `0` falls back to the default. |
+| `onTrace` | `ChannelTraceHandler` | Unset | Optional observer of raw requests and responses. See [Debugging](#debugging). |
 
 Call remote methods through `client.stub`. Its type is `RemoteObject<T>`, an
 exported mapped type that preserves method arguments and wraps synchronous return
@@ -197,6 +199,77 @@ when deciding whether this transport fits your application.
 
 The public API provides individual calls with positional arguments. Batch calls,
 notifications, cancellation, and transfer lists are not exposed.
+
+## Debugging
+
+Built-in debug logging is off by default. To enable it for a page's origin, run
+this in its browser console and reload the page:
+
+```js
+localStorage.setItem('channel-rpc-debug', '1');
+```
+
+Remove the key and reload to disable it. The switch is read once when the module
+loads; any non-empty value, including `'false'`, enables it. If storage is
+unavailable, communication continues with built-in logging disabled. Parent and
+iframe pages on different origins have separate storage settings.
+
+Logs use `[CHANNEL_RPC]`, an event name, and selected metadata: `channelId`, string
+`method` and `requestId`, response `outcome`, and a finite numeric `errorCode` when
+available. They do not include parameters, results, error messages, or exception
+objects. Identifiers and method names must not contain credentials; checking
+their types does not redact their contents.
+
+For full content inspection, both constructors accept an optional `onTrace`
+callback. It works independently of the debug switch and is configured per
+instance. For example, when debugging with artificial test data:
+
+```ts
+const client = new ChannelClient<Handler>({
+	target: window.parent,
+	channelId: 'example',
+	onTrace(event) {
+		console.log(event); // Includes raw content; use with test data.
+	}
+});
+```
+
+The exported `ChannelTraceHandler` receives a read-only `ChannelTraceEvent` with
+`event`, `channelId`, optional `payload: unknown`, and optional `error: unknown`.
+`payload` is the JSON-RPC body, rather than a browser event or window reference.
+
+| Event | Contents and timing |
+| --- | --- |
+| `send_request` | Client request, immediately before attempting `postMessage`. |
+| `receive_request` | Server request, after origin/source checks and before JSON-RPC validation. |
+| `send_response` | Server response, immediately before attempting `postMessage`. |
+| `receive_response` | Client response, before JSON-RPC validation and request matching. |
+| `handler_error` | Server request and the handler's original thrown or rejected value in `error`. The caller still receives `InternalError`. |
+| `invalid_response` | Unrecognized response and the fixed `Error('UNKNOWN_RESPONSE')` thrown from the message listener. |
+
+Sending events indicate an attempt, not confirmation that the other window
+received the message. Existing remote error objects still propagate unchanged;
+only the library-generated unknown-response error omits the original body.
+
+Callbacks observe original references, not snapshots. Do not mutate them; copy
+values yourself if you need historical snapshots. Callbacks run synchronously,
+and returned promises are not awaited. Thrown exceptions and rejected promises
+from the callback are ignored, as are failures of the built-in console output.
+Keep callbacks lightweight because synchronous work still affects page timing.
+
+Full traces are not automatically redacted. In production, explicitly select
+fields your application allows recording instead of logging or uploading the
+whole event. For metadata-only application logging, for example:
+
+```ts
+const onTrace: ChannelTraceHandler = ({ event, channelId }) => {
+	console.info({ event, channelId });
+};
+```
+
+Import `ChannelTraceHandler` with `import type` when using this example. For
+temporary inspection without a callback, use breakpoints in the request/response
+handlers; enable pausing on caught exceptions to inspect original handler errors.
 
 ## Development
 

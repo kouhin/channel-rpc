@@ -1,4 +1,11 @@
-import { ChannelClient, ChannelErrors, ChannelServer, type RemoteObject } from 'channel-rpc';
+import {
+	ChannelClient,
+	ChannelErrors,
+	ChannelServer,
+	type ChannelTraceEvent,
+	type ChannelTraceHandler,
+	type RemoteObject
+} from 'channel-rpc';
 
 interface Handler {
 	add(a: number, b: number): number;
@@ -7,8 +14,22 @@ interface Handler {
 
 export function useChannel(target: WindowProxy) {
 	const handler: Handler = { add: (a, b) => a + b, greet: async (name) => `Hello ${name}` };
-	const server = new ChannelServer({ channelId: 'consumer', handler });
-	const client = new ChannelClient<Handler>({ channelId: server.channelId, target });
+	const traces: ChannelTraceEvent[] = [];
+	const onTrace: ChannelTraceHandler = (event) => {
+		traces.push(event);
+		// @ts-expect-error Trace payloads require narrowing before access.
+		event.payload.params;
+		// @ts-expect-error Trace metadata is read-only.
+		event.channelId = 'changed';
+	};
+	const server = new ChannelServer({ channelId: 'consumer', handler, onTrace });
+	const client = new ChannelClient<Handler>({
+		channelId: server.channelId,
+		target,
+		onTrace: async (event) => {
+			await onTrace(event);
+		}
+	});
 	const remote: RemoteObject<Handler> = client.stub;
 	const sum: Promise<number> = remote.add(2, 3);
 	const greeting: Promise<string> = remote.greet('world');

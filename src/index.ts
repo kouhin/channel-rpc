@@ -80,9 +80,53 @@ try {
 } catch {
 	// Storage may be unavailable in restricted browser contexts or outside a browser.
 }
-function debug(...args: any[]) {
-	if (!debugEnabled) return;
-	console.log(...args);
+
+export type ChannelTraceEvent = Readonly<{
+	event:
+		| 'send_request'
+		| 'receive_request'
+		| 'send_response'
+		| 'receive_response'
+		| 'handler_error'
+		| 'invalid_response';
+	channelId: string;
+	payload?: unknown;
+	error?: unknown;
+}>;
+
+export type ChannelTraceHandler = (event: ChannelTraceEvent) => void | Promise<void>;
+
+function trace(
+	event: ChannelTraceEvent['event'],
+	channelId: string,
+	payload: unknown,
+	onTrace?: ChannelTraceHandler,
+	error?: unknown
+) {
+	if (!debugEnabled && !onTrace) return;
+	if (debugEnabled) {
+		try {
+			const data = payload && typeof payload === 'object' ? (payload as Record<string, unknown>) : {};
+			const rpcError = data.error && typeof data.error === 'object' ? (data.error as Record<string, unknown>) : {};
+			console.log('[CHANNEL_RPC]', event, {
+				channelId,
+				method: typeof data.method === 'string' ? data.method : undefined,
+				requestId: typeof data.id === 'string' ? data.id : undefined,
+				outcome: isJsonRpcSuccessResponse(data) ? 'success' : isJsonRpcErrorResponse(data) ? 'error' : undefined,
+				errorCode: typeof rpcError.code === 'number' && Number.isFinite(rpcError.code) ? rpcError.code : undefined
+			});
+		} catch {
+			// Diagnostics must not interrupt communication.
+		}
+	}
+	if (onTrace) {
+		try {
+			const pending = onTrace({ event, channelId, payload, error });
+			if (pending) void Promise.resolve(pending).catch(() => {});
+		} catch {
+			// A consumer's diagnostic callback must not replace the RPC result.
+		}
+	}
 }
 
 const TIMEOUT_ERROR_MSG = 'timeout' as const;
@@ -152,11 +196,13 @@ export class ChannelServer<T extends object> {
 	private _unlisten: (() => void) | undefined = undefined;
 
 	private readonly _handlers: Record<string, (...args: unknown[]) => unknown>;
+	private readonly _onTrace?: ChannelTraceHandler;
 
 	constructor(options: {
 		channelId: string;
 		allowOrigins?: string[];
 		handler?: T;
+		onTrace?: ChannelTraceHandler;
 	}) {
 		const { allowOrigins, channelId, handler } = options;
 		if (!channelId) throw new Error('id is required');
@@ -164,6 +210,7 @@ export class ChannelServer<T extends object> {
 		this.channelId = channelId;
 		this.allowOrigins = allowOrigins && allowOrigins.indexOf('*') === -1 ? allowOrigins : [];
 		this._handlers = {};
+		this._onTrace = options.onTrace;
 
 		const h = handler || {};
 		Object.keys(h).forEach((method) => {
@@ -198,13 +245,10 @@ export class ChannelServer<T extends object> {
 			throw new Error(`[CHANNEL_RPC_SERVER][channel=${this.channelId}] Invalid origin: ${ev.origin}`);
 		}
 		if (!ev.source) {
-			debug(`[CHANNEL_RPC_SERVER][channel=${this.channelId}] event.source is null`, ev);
 			return;
 		}
 
-		// DEBUG
-		debug(`[CHANNEL_RPC_SERVER][channel=${this.channelId}] RECEIVE_REQUEST`, ev.data);
-
+		trace('receive_request', this.channelId, ev.data.payload, this._onTrace);
 		this._handleRpcRequest(ev.source, ev.data.payload);
 	};
 
@@ -214,29 +258,22 @@ export class ChannelServer<T extends object> {
 			channelId: this.channelId,
 			payload
 		};
+		trace('send_response', this.channelId, payload, this._onTrace);
 		source.postMessage(res, {
 			targetOrigin: '*'
 		});
 	}
 
 	private async _handleRpcRequest(source: MessageEventSource, payload: unknown): Promise<void> {
-		debug(`[CHANNEL_RPC_SERVER][channel=${this.channelId}] HANDLE_REQUEST_RPC`, payload);
 		if (!isJsonRpcRequest(payload)) {
 			const res: JsonRpcErrorResponse = createErrorResponse(ChannelErrors.InvalidRequest, (payload as any).id || null);
-			debug(`[CHANNEL_RPC_SERVER][channel=${this.channelId}] reply`, res);
 			this._sendResponse(source, res);
 			return;
 		}
 
-		debug(
-			`[CHANNEL_RPC_SERVER][channel=${this.channelId}] HANDLE_REQUEST_RPC method[${payload.method}]`,
-			this._handlers,
-			payload
-		);
 		const handler = this._handlers[payload.method];
 		if (!handler) {
 			const res: JsonRpcErrorResponse = createErrorResponse(ChannelErrors.MethodNotFound, payload.id || null);
-			debug(`[CHANNEL_RPC_SERVER][channel=${this.channelId}] SEND_RESPONSE`, res);
 			this._sendResponse(source, res);
 			return;
 		}
@@ -247,11 +284,10 @@ export class ChannelServer<T extends object> {
 				result,
 				id: payload.id
 			};
-			debug(`[CHANNEL_RPC_SERVER][channel=${this.channelId}] SEND_RESPONSE`, res);
 			this._sendResponse(source, res);
-		} catch {
+		} catch (error) {
+			trace('handler_error', this.channelId, payload, this._onTrace, error);
 			const res: JsonRpcErrorResponse = createErrorResponse(ChannelErrors.InternalError, payload.id || null);
-			debug(`[CHANNEL_RPC_SERVER][channel=${this.channelId}] SEND_RESPONSE`, res);
 			this._sendResponse(source, res);
 		}
 	}
@@ -270,11 +306,13 @@ export class ChannelClient<T extends object> {
 
 	private readonly _deferreds: Record<string, Deferred<unknown> | undefined>;
 	private readonly _timeout: number;
+	private readonly _onTrace?: ChannelTraceHandler;
 
 	constructor(options: {
 		target: WindowProxy;
 		channelId: string;
 		timeout?: number;
+		onTrace?: ChannelTraceHandler;
 	}) {
 		const { target, channelId, timeout } = options;
 		if (!target) throw new Error('target is required');
@@ -284,11 +322,11 @@ export class ChannelClient<T extends object> {
 		this.channelId = channelId;
 		this._deferreds = {};
 		this._timeout = timeout || 1000;
+		this._onTrace = options.onTrace;
 
 		this.stub = new Proxy({} as RemoteObject<T>, {
 			get: (_target, prop) => {
 				return (...args: unknown[]) => {
-					debug(`[CHANNEL_RPC_CLIENT][channel=${channelId}] INVOKE`, prop, args);
 					return this._sendRequest(String(prop), args);
 				};
 			}
@@ -299,8 +337,6 @@ export class ChannelClient<T extends object> {
 			if (!isChannelRpcResponse(ev.data) || ev.data.channelId !== channelId) {
 				return;
 			}
-			// DEBUG
-			debug(`[CHANNEL_RPC_CLIENT][channel=${this.channelId}] HANDLE_RESPONSE`, ev.data);
 			this._handleRpcResponse(ev.data.payload);
 		});
 	}
@@ -327,18 +363,18 @@ export class ChannelClient<T extends object> {
 			params: args,
 			id
 		};
-		debug('[CHANNEL_RPC_CLIENT] SEND_REQUEST', req);
 		const channelReq: ChannelRpcRequest = {
 			type: MessageTypes.ChannelRpcRequest,
 			channelId: this.channelId,
 			payload: req
 		};
+		trace('send_request', this.channelId, req, this._onTrace);
 		this.target.postMessage(channelReq, '*');
 		return promise;
 	}
 
 	private _handleRpcResponse(payload: unknown) {
-		debug('[CHANNEL_RPC_CLIENT] HANDLE_RESPONSE_RPC', payload);
+		trace('receive_response', this.channelId, payload, this._onTrace);
 		if (isJsonRpcSuccessResponse(payload)) {
 			const { id, result } = payload;
 			this._deferreds[id]?.resolve(result);
@@ -347,10 +383,8 @@ export class ChannelClient<T extends object> {
 			if (!id) throw error;
 			this._deferreds[id]?.reject(error);
 		} else {
-			const err = new Error(
-				`[CHANNEL_RPC_CLIENT][channel=${this.channelId}] UNKNOWN_RESPONSE: ${JSON.stringify(payload)}`
-			);
-			debug('[CHANNEL_RPC_CLIENT] HANDLE_RESPONSE_RPC, ERROR', err);
+			const err = new Error('UNKNOWN_RESPONSE');
+			trace('invalid_response', this.channelId, payload, this._onTrace, err);
 			throw err;
 		}
 	}
