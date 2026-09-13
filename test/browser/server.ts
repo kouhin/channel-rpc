@@ -1,5 +1,6 @@
 import { resolve } from 'node:path';
 import { root } from '../../scripts/utils';
+import { originPage } from './origins';
 
 const port = Number(process.env.RPC_TEST_PORT ?? 4173);
 const parentOrigin = `http://127.0.0.1:${port}`;
@@ -60,7 +61,12 @@ const childPage = `<!doctype html><html lang="en"><head><title>Channel RPC child
 function fetch(request: Request) {
 	const url = new URL(request.url);
 	if (url.pathname === '/health') return new Response('ok');
-	if (url.pathname === '/dist/index.js') return new Response(Bun.file(resolve(root, 'dist/index.js')));
+	if (url.pathname === '/dist/index.js') {
+		return new Response(Bun.file(resolve(root, 'dist/index.js')), {
+			headers: { 'content-type': 'text/javascript', 'access-control-allow-origin': '*' }
+		});
+	}
+	if (url.pathname === '/origins.html') return new Response(originPage, { headers: { 'content-type': 'text/html' } });
 	if (url.pathname === '/parent.html') {
 		const mode = url.searchParams.get('mode') ?? 'success';
 		if (!['success', 'errors', 'deny', 'trace'].includes(mode)) return new Response('Unknown mode', { status: 400 });

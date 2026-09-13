@@ -71,7 +71,7 @@ describe('ChannelServer', () => {
 				channelId,
 				payload: { jsonrpc: '2.0', error: ChannelErrors.InvalidRequest, id: 'invalid' }
 			},
-			{ targetOrigin: '*' }
+			{ targetOrigin: clientOrigin }
 		);
 	});
 
@@ -153,19 +153,19 @@ describe('ChannelClient', () => {
 		const client = new ChannelClient<{ value(): number }>({ channelId, target: messages.target });
 		const result = client.stub.value();
 		const id = messages.requestId();
-		messages.emit({ ...response(id, -1), type: 'unrelated' });
-		messages.emit(response(id, -2, 'another-channel'));
-		messages.emit(response('another-request', -3));
-		messages.emit(response(id, 42));
+		messages.emitResponse({ ...response(id, -1), type: 'unrelated' });
+		messages.emitResponse(response(id, -2, 'another-channel'));
+		messages.emitResponse(response('another-request', -3));
+		messages.emitResponse(response(id, 42));
 		await expect(result).resolves.toBe(42);
 	});
 
 	test('times out, ignores a late response, and accepts a subsequent request', async () => {
 		const client = new ChannelClient<{ value(): number }>({ channelId, target: messages.target, timeout: 20 });
 		await expect(client.stub.value()).rejects.toEqual(ChannelErrors.Timeout);
-		expect(() => messages.emit(response(messages.requestId(), -1))).not.toThrow();
+		expect(() => messages.emitResponse(response(messages.requestId(), -1))).not.toThrow();
 		const next = client.stub.value();
-		messages.emit(response(messages.requestId(1), 42));
+		messages.emitResponse(response(messages.requestId(1), 42));
 		await expect(next).resolves.toBe(42);
 	});
 });

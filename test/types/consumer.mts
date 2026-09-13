@@ -23,9 +23,13 @@ export function useChannel(target: WindowProxy) {
 		event.channelId = 'changed';
 	};
 	const server = new ChannelServer({ channelId: 'consumer', handler, onTrace });
+	new ChannelClient<Handler>({ channelId: server.channelId, target });
+	// @ts-expect-error targetOrigin must be a string.
+	new ChannelClient<Handler>({ channelId: server.channelId, target, targetOrigin: 42 });
 	const client = new ChannelClient<Handler>({
 		channelId: server.channelId,
 		target,
+		targetOrigin: 'https://server.example',
 		onTrace: async (event) => {
 			await onTrace(event);
 		}

@@ -4,12 +4,14 @@ export const requestType = '@channel-rpc/REQUEST';
 export const responseType = '@channel-rpc/RESPONSE';
 export const channelId = 'test-channel';
 export const clientOrigin = 'https://client.example';
+export const serverOrigin = 'https://server.example';
 
 export function messageHarness() {
 	const listeners = new Set<EventListenerOrEventListenerObject>();
-	const properties = ['addEventListener', 'removeEventListener'] as const;
+	const properties = ['addEventListener', 'removeEventListener', 'origin'] as const;
 	const original = properties.map((name) => Object.getOwnPropertyDescriptor(globalThis, name));
 	Object.defineProperties(globalThis, {
+		origin: { configurable: true, value: clientOrigin },
 		addEventListener: {
 			configurable: true,
 			value: (type: string, listener: EventListenerOrEventListenerObject) => {
@@ -27,7 +29,7 @@ export function messageHarness() {
 	const postRequest = mock((_data: unknown, _origin: string) => {});
 	const target = { postMessage: postRequest } as unknown as WindowProxy;
 	const postResponse = mock((data: unknown, _options: unknown) => {
-		queueMicrotask(() => emit(structuredClone(data), { source: target }));
+		queueMicrotask(() => emitResponse(structuredClone(data)));
 	});
 	const source = { postMessage: postResponse } as unknown as WindowProxy;
 
@@ -44,12 +46,18 @@ export function messageHarness() {
 		}
 	}
 
+	function emitResponse(data: unknown, options: { origin?: string; source?: MessageEventSource | null } = {}) {
+		emit(data, { source: target, origin: serverOrigin, ...options });
+	}
+
 	return {
 		target,
+		source,
 		postRequest,
 		postResponse,
 		listeners,
 		emit,
+		emitResponse,
 		loopback() {
 			postRequest.mockImplementation((data) => queueMicrotask(() => emit(structuredClone(data))));
 		},

@@ -68,6 +68,17 @@ function generateUUID(): string {
 		.join('-');
 }
 
+function normalizeTargetOrigin(targetOrigin = '*'): string {
+	if (targetOrigin === '*') return targetOrigin;
+	try {
+		const origin = new URL(targetOrigin === '/' ? globalThis.origin : targetOrigin).origin;
+		if (origin !== 'null') return origin;
+	} catch {
+		// Invalid or opaque origins cannot constrain delivery to a window.
+	}
+	throw new TypeError('Invalid targetOrigin');
+}
+
 interface Deferred<T> {
 	resolve: (value: T) => void;
 	reject: (reason: any) => void;
@@ -249,32 +260,35 @@ export class ChannelServer<T extends object> {
 		}
 
 		trace('receive_request', this.channelId, ev.data.payload, this._onTrace);
-		this._handleRpcRequest(ev.source, ev.data.payload);
+		// Opaque origins require wildcard replies to preserve sandboxed-window support.
+		this._handleRpcRequest(ev.source, ev.data.payload, ev.origin === 'null' ? '*' : ev.origin);
 	};
 
-	private async _sendResponse(source: MessageEventSource, payload: JsonRpcSuccessResponse | JsonRpcErrorResponse) {
+	private async _sendResponse(
+		source: MessageEventSource,
+		payload: JsonRpcSuccessResponse | JsonRpcErrorResponse,
+		targetOrigin: string
+	) {
 		const res: ChannelRpcResponse = {
 			type: MessageTypes.ChannelRpcResponse,
 			channelId: this.channelId,
 			payload
 		};
 		trace('send_response', this.channelId, payload, this._onTrace);
-		source.postMessage(res, {
-			targetOrigin: '*'
-		});
+		source.postMessage(res, { targetOrigin });
 	}
 
-	private async _handleRpcRequest(source: MessageEventSource, payload: unknown): Promise<void> {
+	private async _handleRpcRequest(source: MessageEventSource, payload: unknown, targetOrigin: string): Promise<void> {
 		if (!isJsonRpcRequest(payload)) {
 			const res: JsonRpcErrorResponse = createErrorResponse(ChannelErrors.InvalidRequest, (payload as any).id || null);
-			this._sendResponse(source, res);
+			this._sendResponse(source, res, targetOrigin);
 			return;
 		}
 
 		const handler = this._handlers[payload.method];
 		if (!handler) {
 			const res: JsonRpcErrorResponse = createErrorResponse(ChannelErrors.MethodNotFound, payload.id || null);
-			this._sendResponse(source, res);
+			this._sendResponse(source, res, targetOrigin);
 			return;
 		}
 		try {
@@ -284,11 +298,11 @@ export class ChannelServer<T extends object> {
 				result,
 				id: payload.id
 			};
-			this._sendResponse(source, res);
+			this._sendResponse(source, res, targetOrigin);
 		} catch (error) {
 			trace('handler_error', this.channelId, payload, this._onTrace, error);
 			const res: JsonRpcErrorResponse = createErrorResponse(ChannelErrors.InternalError, payload.id || null);
-			this._sendResponse(source, res);
+			this._sendResponse(source, res, targetOrigin);
 		}
 	}
 }
@@ -306,10 +320,12 @@ export class ChannelClient<T extends object> {
 
 	private readonly _deferreds: Record<string, Deferred<unknown> | undefined>;
 	private readonly _timeout: number;
+	private readonly _targetOrigin: string;
 	private readonly _onTrace?: ChannelTraceHandler;
 
 	constructor(options: {
 		target: WindowProxy;
+		targetOrigin?: string;
 		channelId: string;
 		timeout?: number;
 		onTrace?: ChannelTraceHandler;
@@ -318,6 +334,7 @@ export class ChannelClient<T extends object> {
 		if (!target) throw new Error('target is required');
 		if (!channelId) throw new Error('channelId is required');
 
+		this._targetOrigin = normalizeTargetOrigin(options.targetOrigin);
 		this.target = target;
 		this.channelId = channelId;
 		this._deferreds = {};
@@ -334,6 +351,9 @@ export class ChannelClient<T extends object> {
 
 		const self = typeof globalThis === 'object' ? globalThis : window;
 		self.addEventListener('message', (ev) => {
+			if (ev.source !== target || (this._targetOrigin !== '*' && ev.origin !== this._targetOrigin)) {
+				return;
+			}
 			if (!isChannelRpcResponse(ev.data) || ev.data.channelId !== channelId) {
 				return;
 			}
@@ -369,7 +389,7 @@ export class ChannelClient<T extends object> {
 			payload: req
 		};
 		trace('send_request', this.channelId, req, this._onTrace);
-		this.target.postMessage(channelReq, '*');
+		this.target.postMessage(channelReq, this._targetOrigin);
 		return promise;
 	}
 
