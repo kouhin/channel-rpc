@@ -178,12 +178,12 @@ test('preserves remote error identity and gives the trace callback the same resp
 	const error = { code: -32001, message: 'redacted-session-secret', data: ['redacted-wallet-token'] };
 	const pending = client.stub.value();
 	const payload = { jsonrpc: '2.0', id: messages.requestId(), error };
-	messages.emit({ type: responseType, channelId, payload });
+	messages.emitResponse({ type: responseType, channelId, payload });
 	await expect(pending).rejects.toBe(error);
 	expect(events[1].payload).toBe(payload);
 	let thrown: unknown;
 	try {
-		messages.emit({ type: responseType, channelId, payload: { ...payload, id: null } });
+		messages.emitResponse({ type: responseType, channelId, payload: { ...payload, id: null } });
 	} catch (caught) {
 		thrown = caught;
 	}

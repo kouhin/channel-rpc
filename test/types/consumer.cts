@@ -14,9 +14,13 @@ export function useChannel(target: WindowProxy) {
 		event.payload.params;
 	};
 	const server = new rpc.ChannelServer({ channelId: 'consumer', handler, onTrace });
+	new rpc.ChannelClient<Handler>({ channelId: server.channelId, target });
+	// @ts-expect-error targetOrigin must be a string.
+	new rpc.ChannelClient<Handler>({ channelId: server.channelId, target, targetOrigin: 42 });
 	const client = new rpc.ChannelClient<Handler>({
 		channelId: server.channelId,
 		target,
+		targetOrigin: 'https://server.example',
 		onTrace: async (event) => {
 			await onTrace(event);
 		}

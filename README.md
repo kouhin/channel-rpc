@@ -73,6 +73,7 @@ import type { Handler } from './parent';
 
 const client = new ChannelClient<Handler>({
 	target: window.parent,
+	targetOrigin: 'https://app.example',
 	channelId: 'example',
 	timeout: 5000
 });
@@ -125,16 +126,22 @@ Creates a client and starts listening for responses immediately.
 | Option | Type | Default | Description |
 | --- | --- | --- | --- |
 | `target` | `WindowProxy` | Required | The window hosting the server, such as `window.parent` or an iframe's `contentWindow`. |
+| `targetOrigin` | `string` | `'*'` | Origin required for request delivery and incoming responses. An absolute URL is normalized to its origin; `'/'` selects the current window's origin at construction. `'*'` accepts any origin, but responses must still come from `target`. |
 | `channelId` | `string` | Required | The server's channel identifier. |
 | `timeout` | `number` | `1000` | Request timeout in milliseconds. Use a positive value; `0` falls back to the default. |
 | `onTrace` | `ChannelTraceHandler` | Unset | Optional observer of raw requests and responses. See [Debugging](#debugging). |
+
+Invalid URLs, empty strings, `'null'`, and URLs with opaque origins throw
+`TypeError('Invalid targetOrigin')` at construction. Using `'/'` also throws if
+the current window has an opaque origin. Invalid configuration never falls back
+to `'*'`.
 
 Call remote methods through `client.stub`. Its type is `RemoteObject<T>`, an
 exported mapped type that preserves method arguments and wraps synchronous return
 values in promises. Asynchronous methods retain their promise return types.
 
 A timeout rejects the waiting call; it does not cancel the remote handler or
-retry the request. Reuse client instances: the current client API has no `stop()`
+retry the request. Reuse client instances: the client API has no `stop()`
 or `dispose()` method to remove its message listener.
 
 ### `ChannelErrors`
@@ -184,13 +191,32 @@ Use cloneable values; functions and DOM nodes cannot be sent. TypeScript types d
 not validate incoming data at runtime, so validate arguments inside your handlers.
 
 Use this library between windows you trust. `channelId` identifies a conversation
-and does not authenticate the other window. In the current implementation:
+and does not authenticate the other window.
 
 - `allowOrigins` checks incoming **server requests**. Supply exact origins such as
   `https://widget.example` or `http://localhost:3000`, without paths.
-- The client matches responses by channel and request ID; it does not verify the
-  response's `origin` or `source`.
-- Outgoing requests and responses use `targetOrigin: '*'`.
+- The client only accepts responses from its configured `target` window. With a
+  specific `targetOrigin`, it also checks the response's origin before handling
+  the body or invoking `onTrace`. Rejected sources are silently ignored; a call
+  without a valid response eventually times out.
+- Requests use the client's `targetOrigin`. Configure the server's exact origin
+  when known, as in the quick start. The default is `'*'`, which permits delivery
+  even after the target navigates to another origin.
+- For requests with a non-opaque origin, the server sends each response to the
+  request's window and origin, including when asynchronous handlers finish out
+  of order. If that window has navigated to another origin, the browser discards
+  the response.
+
+Sandboxed windows without `allow-same-origin` and `data:` pages have opaque
+origins, reported as `'null'`. The server replies with `'*'` to an opaque-origin
+request that passes `allowOrigins`. A client targeting an opaque-origin server
+must likewise use `'*'` (or omit `targetOrigin`). These paths cannot provide an
+exact origin constraint. Allowing `'null'` in
+`allowOrigins` permits opaque origins generally; it does not identify one window.
+
+The server accepts multiple windows matching `allowOrigins`; it is not bound to
+one client window. Origin checks do not distinguish documents after same-origin
+navigation.
 
 Account for these limits when embedding content or allowing windows to navigate.
 See the browser's
@@ -243,13 +269,13 @@ The exported `ChannelTraceHandler` receives a read-only `ChannelTraceEvent` with
 | `send_request` | Client request, immediately before attempting `postMessage`. |
 | `receive_request` | Server request, after origin/source checks and before JSON-RPC validation. |
 | `send_response` | Server response, immediately before attempting `postMessage`. |
-| `receive_response` | Client response, before JSON-RPC validation and request matching. |
-| `handler_error` | Server request and the handler's original thrown or rejected value in `error`. The caller still receives `InternalError`. |
+| `receive_response` | Client response, after origin/source checks and before JSON-RPC validation and request matching. |
+| `handler_error` | Server request and the handler's original thrown or rejected value in `error`. The caller receives `InternalError`. |
 | `invalid_response` | Unrecognized response and the fixed `Error('UNKNOWN_RESPONSE')` thrown from the message listener. |
 
 Sending events indicate an attempt, not confirmation that the other window
-received the message. Existing remote error objects still propagate unchanged;
-only the library-generated unknown-response error omits the original body.
+received the message. Remote error objects propagate unchanged. The
+library-generated unknown-response error omits the original body.
 
 Callbacks observe original references, not snapshots. Do not mutate them; copy
 values yourself if you need historical snapshots. Callbacks run synchronously,

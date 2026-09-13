@@ -61,7 +61,7 @@ assert.equal(events.find((event) => event.event === 'handler_error')?.error, han
 assert.deepEqual((events[3].payload as { result: unknown }).result, value);
 
 function emit(payload: unknown) {
-	messages.emit({ type: responseType, channelId, payload });
+	messages.emitResponse({ type: responseType, channelId, payload });
 }
 for (const payload of [undefined, null, secrets[0], 42n, { jsonrpc: '1.0', value }, { jsonrpc: '2.0', value }]) {
 	let thrown: unknown;
