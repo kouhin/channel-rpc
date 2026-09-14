@@ -26,6 +26,22 @@ function response(id: string, result: unknown, channel = channelId) {
 	return { type: responseType, channelId: channel, payload: { jsonrpc: '2.0', id, result } };
 }
 
+test('uses the predefined JSON-RPC 2.0 error codes and messages', () => {
+	expect(ChannelErrors).toMatchObject({
+		InvalidRequest: { code: -32600, message: 'Invalid Request' },
+		MethodNotFound: { code: -32601, message: 'Method not found' },
+		InternalError: { code: -32603, message: 'Internal error' }
+	});
+	const codes = Object.values(ChannelErrors).map((error) => error.code);
+	expect(codes.every(Number.isInteger)).toBe(true);
+	expect(new Set(codes).size).toBe(codes.length);
+});
+
+test('retains timeout compatibility and uses the vscode-jsonrpc disposal convention', () => {
+	expect(ChannelErrors.Timeout).toEqual({ code: -32000, message: 'Timeout' });
+	expect(ChannelErrors.Disposed).toEqual({ code: -32097, message: 'Client disposed' });
+});
+
 describe('ChannelServer', () => {
 	test('requires a channel identifier', () => {
 		expect(() => new ChannelServer({ channelId: '' })).toThrow('id is required');

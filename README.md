@@ -10,7 +10,7 @@ request/response messages over `postMessage`.
 - Infer remote method arguments and return types from a TypeScript handler.
 - Call synchronous or asynchronous handlers through a Promise-based API.
 - Separate conversations by channel, configure request timeouts, and filter
-  incoming requests by origin.
+  incoming requests by origin or source window.
 - Use the library without runtime dependencies.
 
 ## Installation
@@ -106,6 +106,7 @@ Registers an object's methods for callers on the selected channel.
 | `channelId` | `string` | Required | Non-empty channel identifier shared with the client. |
 | `handler` | `T` | `{}` | Object whose own enumerable function properties are registered as handlers. |
 | `allowOrigins` | `string[]` | `[]` | Exact origins allowed to send requests. An empty list or a list containing `'*'` permits any origin. |
+| `source` | `WindowProxy` | Unset | Optional caller window. Requests from any other window are silently ignored before origin checks, tracing, or handler execution. |
 | `onTrace` | `ChannelTraceHandler` | Unset | Optional observer of raw requests, responses, and handler failures. See [Debugging](#debugging). |
 
 Handlers are registered at construction and bound to the supplied object, so
@@ -118,6 +119,23 @@ method calls retain their `this` value. Class prototype methods are not register
 
 Call `server.stop()` when the owning component is disposed. It stops accepting new
 requests; handlers already running can still finish and send responses.
+
+To accept calls from one window, supply its reference along with `allowOrigins`.
+For example, inside an iframe that exposes methods to its parent:
+
+```ts
+const server = new ChannelServer({
+	channelId: 'example',
+	source: window.parent,
+	allowOrigins: ['https://app.example'],
+	handler: { add: (a: number, b: number) => a + b }
+});
+server.start();
+```
+
+A parent can similarly bind to an attached iframe's `contentWindow`, after
+checking that it is non-null. The binding is fixed at construction and survives
+`stop()` / `start()`. Create a new server to bind to a different window.
 
 ### `new ChannelClient<T>(options)`
 
@@ -141,20 +159,48 @@ exported mapped type that preserves method arguments and wraps synchronous retur
 values in promises. Asynchronous methods retain their promise return types.
 
 A timeout rejects the waiting call; it does not cancel the remote handler or
-retry the request. Reuse client instances: the client API has no `stop()`
-or `dispose()` method to remove its message listener.
+retry the request.
+
+| Method | Behavior |
+| --- | --- |
+| `dispose(): void` | Permanently detach this client's listener, reject pending calls with `ChannelErrors.Disposed`, and clear their timers and request records. Repeated calls have no additional effect. |
+
+Reuse the client while its owner is active, then explicitly release it:
+
+```ts
+try {
+	const sum = await client.stub.add(2, 3);
+	console.log(sum);
+} finally {
+	client.dispose();
+}
+```
+
+Disposal affects only this client. Calls already settled retain their results;
+remote handlers already running can still finish, and late responses are ignored.
+Subsequent calls through its stub return rejected promises with
+`ChannelErrors.Disposed` without sending messages. Create a new client to resume
+communication. The library does not automatically attach page or framework
+lifecycle hooks.
 
 ### `ChannelErrors`
 
 RPC failures reject with an object containing `code` and `message`, rather than an
 `Error` instance. Compare codes using the exported constants:
 
-| Constant | Code | Meaning |
-| --- | --- | --- |
-| `ChannelErrors.InvalidRequest` | `-32600` | The server received an invalid JSON-RPC request. |
-| `ChannelErrors.MethodNotFound` | `-32601` | No handler was found for the requested method. |
-| `ChannelErrors.InternalError` | `-32603` | A handler threw an exception or returned a rejected promise. |
-| `ChannelErrors.Timeout` | `-32000` | No matching response arrived before the client timeout. |
+| Constant | Code | Defined by | Meaning |
+| --- | --- | --- | --- |
+| `ChannelErrors.InvalidRequest` | `-32600` | JSON-RPC 2.0 | The server received an invalid JSON-RPC request. |
+| `ChannelErrors.MethodNotFound` | `-32601` | JSON-RPC 2.0 | No handler was found for the requested method. |
+| `ChannelErrors.InternalError` | `-32603` | JSON-RPC 2.0 | A handler threw an exception or returned a rejected promise. |
+| `ChannelErrors.Timeout` | `-32000` | channel-rpc client API | No matching response arrived before the client timeout. |
+| `ChannelErrors.Disposed` | `-32097` | channel-rpc client API | The client was disposed while waiting, or the call was made after disposal. |
+
+`InvalidRequest`, `MethodNotFound`, and `InternalError` use the predefined codes
+and messages from
+[JSON-RPC 2.0 section 5.1](https://www.jsonrpc.org/specification#error_object).
+`Timeout` and `Disposed` are library-defined codes for local promise rejections
+and are never sent as JSON-RPC responses.
 
 For example, to handle timeouts in the iframe:
 
@@ -195,6 +241,9 @@ and does not authenticate the other window.
 
 - `allowOrigins` checks incoming **server requests**. Supply exact origins such as
   `https://widget.example` or `http://localhost:3000`, without paths.
+- Server `source` optionally restricts requests to one window, including when
+  other windows share its origin. Requests from that window must still pass
+  `allowOrigins`.
 - The client only accepts responses from its configured `target` window. With a
   specific `targetOrigin`, it also checks the response's origin before handling
   the body or invoking `onTrace`. Rejected sources are silently ignored; a call
@@ -214,9 +263,10 @@ must likewise use `'*'` (or omit `targetOrigin`). These paths cannot provide an
 exact origin constraint. Allowing `'null'` in
 `allowOrigins` permits opaque origins generally; it does not identify one window.
 
-The server accepts multiple windows matching `allowOrigins`; it is not bound to
-one client window. Origin checks do not distinguish documents after same-origin
-navigation.
+Without `source`, the server accepts multiple windows matching `allowOrigins`.
+Window references can survive navigation: combine `source` with `allowOrigins`,
+and do not treat either as document-level identity. They do not distinguish
+documents after same-origin navigation.
 
 Account for these limits when embedding content or allowing windows to navigate.
 See the browser's

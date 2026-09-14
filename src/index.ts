@@ -143,6 +143,7 @@ function trace(
 const TIMEOUT_ERROR_MSG = 'timeout' as const;
 
 export const ChannelErrors = {
+	// Predefined JSON-RPC 2.0 errors: https://www.jsonrpc.org/specification#error_object
 	InvalidRequest: {
 		code: -32600,
 		message: 'Invalid Request'
@@ -155,14 +156,20 @@ export const ChannelErrors = {
 		code: -32603,
 		message: 'Internal error'
 	},
+	// Legacy local API code, retained for compatibility; never sent as a JSON-RPC response.
 	Timeout: {
 		code: -32000,
 		message: 'Timeout'
+	},
+	// Follows vscode-jsonrpc's PendingResponseRejected convention for local disposal.
+	Disposed: {
+		code: -32097,
+		message: 'Client disposed'
 	}
 } as const;
 
 function createErrorResponse(
-	err: (typeof ChannelErrors)[keyof typeof ChannelErrors],
+	err: (typeof ChannelErrors)['InvalidRequest' | 'MethodNotFound' | 'InternalError'],
 	id: string | null
 ): JsonRpcErrorResponse {
 	return {
@@ -207,11 +214,13 @@ export class ChannelServer<T extends object> {
 	private _unlisten: (() => void) | undefined = undefined;
 
 	private readonly _handlers: Record<string, (...args: unknown[]) => unknown>;
+	private readonly _source?: WindowProxy;
 	private readonly _onTrace?: ChannelTraceHandler;
 
 	constructor(options: {
 		channelId: string;
 		allowOrigins?: string[];
+		source?: WindowProxy;
 		handler?: T;
 		onTrace?: ChannelTraceHandler;
 	}) {
@@ -221,6 +230,7 @@ export class ChannelServer<T extends object> {
 		this.channelId = channelId;
 		this.allowOrigins = allowOrigins && allowOrigins.indexOf('*') === -1 ? allowOrigins : [];
 		this._handlers = {};
+		this._source = options.source;
 		this._onTrace = options.onTrace;
 
 		const h = handler || {};
@@ -250,6 +260,9 @@ export class ChannelServer<T extends object> {
 
 	private _handleMessage: (ev: MessageEvent) => void = (ev) => {
 		if (!isChannelRpcRequest(ev.data) || ev.data.channelId !== this.channelId) {
+			return;
+		}
+		if (this._source !== undefined && ev.source !== this._source) {
 			return;
 		}
 		if (this.allowOrigins.length > 0 && this.allowOrigins.indexOf(ev.origin) === -1) {
@@ -318,6 +331,8 @@ export class ChannelClient<T extends object> {
 	readonly stub: RemoteObject<T>;
 	readonly target: WindowProxy;
 
+	private _disposed = false;
+	private readonly _unlisten: () => void;
 	private readonly _deferreds: Record<string, Deferred<unknown> | undefined>;
 	private readonly _timeout: number;
 	private readonly _targetOrigin: string;
@@ -350,7 +365,7 @@ export class ChannelClient<T extends object> {
 		});
 
 		const self = typeof globalThis === 'object' ? globalThis : window;
-		self.addEventListener('message', (ev) => {
+		const handleMessage = (ev: MessageEvent) => {
 			if (ev.source !== target || (this._targetOrigin !== '*' && ev.origin !== this._targetOrigin)) {
 				return;
 			}
@@ -358,10 +373,23 @@ export class ChannelClient<T extends object> {
 				return;
 			}
 			this._handleRpcResponse(ev.data.payload);
-		});
+		};
+		self.addEventListener('message', handleMessage);
+		this._unlisten = () => self.removeEventListener('message', handleMessage);
+	}
+
+	public dispose(): void {
+		if (this._disposed) return;
+		this._disposed = true;
+		this._unlisten();
+		for (const id of Object.keys(this._deferreds)) {
+			this._deferreds[id]?.reject({ ...ChannelErrors.Disposed });
+			delete this._deferreds[id];
+		}
 	}
 
 	private async _sendRequest(method: string, args: unknown[]): Promise<unknown> {
+		if (this._disposed) throw { ...ChannelErrors.Disposed };
 		const id = generateUUID();
 		const deferred = defer(this._timeout);
 		const promise = deferred.promise
@@ -371,8 +399,8 @@ export class ChannelClient<T extends object> {
 			})
 			.catch((err) => {
 				delete this._deferreds[id];
-				if (err.message === TIMEOUT_ERROR_MSG) {
-					throw createErrorResponse(ChannelErrors.Timeout, id).error;
+				if (err?.message === TIMEOUT_ERROR_MSG) {
+					throw { ...ChannelErrors.Timeout };
 				}
 				throw err;
 			});
@@ -389,12 +417,19 @@ export class ChannelClient<T extends object> {
 			payload: req
 		};
 		trace('send_request', this.channelId, req, this._onTrace);
-		this.target.postMessage(channelReq, this._targetOrigin);
+		if (!this._disposed) {
+			try {
+				this.target.postMessage(channelReq, this._targetOrigin);
+			} catch (error) {
+				deferred.reject(error);
+			}
+		}
 		return promise;
 	}
 
 	private _handleRpcResponse(payload: unknown) {
 		trace('receive_response', this.channelId, payload, this._onTrace);
+		if (this._disposed) return;
 		if (isJsonRpcSuccessResponse(payload)) {
 			const { id, result } = payload;
 			this._deferreds[id]?.resolve(result);
