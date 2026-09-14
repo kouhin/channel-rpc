@@ -22,7 +22,10 @@ export function useChannel(target: WindowProxy) {
 		// @ts-expect-error Trace metadata is read-only.
 		event.channelId = 'changed';
 	};
-	const server = new ChannelServer({ channelId: 'consumer', handler, onTrace });
+	const server = new ChannelServer({ channelId: 'consumer', source: target, handler, onTrace });
+	new ChannelServer({ channelId: 'unbound', handler });
+	// @ts-expect-error source must be a window reference.
+	new ChannelServer({ channelId: 'invalid', source: 42 });
 	new ChannelClient<Handler>({ channelId: server.channelId, target });
 	// @ts-expect-error targetOrigin must be a string.
 	new ChannelClient<Handler>({ channelId: server.channelId, target, targetOrigin: 42 });
@@ -38,11 +41,13 @@ export function useChannel(target: WindowProxy) {
 	const sum: Promise<number> = remote.add(2, 3);
 	const greeting: Promise<string> = remote.greet('world');
 	const timeout: -32000 = ChannelErrors.Timeout.code;
+	const disposed: -32097 = ChannelErrors.Disposed.code;
 	// @ts-expect-error Arguments remain typed across the package boundary.
 	remote.add('2', 3);
 	// @ts-expect-error Only declared methods are available.
 	remote.missing();
 	// @ts-expect-error Remote calls always return a promise.
 	const synchronous: number = remote.add(2, 3);
-	return { sum, greeting, timeout, synchronous };
+	client.dispose();
+	return { sum, greeting, timeout, disposed, synchronous };
 }

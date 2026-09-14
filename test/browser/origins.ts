@@ -9,8 +9,9 @@ declare global {
 			waiting: boolean;
 			done: boolean;
 			result: unknown;
-			startServer(allowOrigins?: string[]): void;
+			startServer(allowOrigins?: string[], source?: WindowProxy): void;
 			startClient(target: WindowProxy, targetOrigin?: string, timeout?: number): void;
+			disposeClient(): void;
 			call(method: 'echo' | 'wait', value?: unknown): void;
 			release(value: unknown): void;
 			flush(target: WindowProxy): Promise<void>;
@@ -31,8 +32,8 @@ export const originPage = `<!doctype html><html lang="en"><head><title>Origin te
 		const state = window.rpcTest = {
 			messages: [], events: [], requestId: '', waiting: false, done: false, result: undefined,
 			release: () => {},
-			startServer(allowOrigins) {
-				new ChannelServer({ channelId: 'origins', allowOrigins, onTrace, handler: {
+			startServer(allowOrigins, source) {
+				new ChannelServer({ channelId: 'origins', allowOrigins, source, onTrace, handler: {
 					echo: (value) => value,
 					wait: () => new Promise((resolve) => { state.release = resolve; state.waiting = true; })
 				} }).start();
@@ -41,6 +42,7 @@ export const originPage = `<!doctype html><html lang="en"><head><title>Origin te
 				client = new ChannelClient({ channelId: 'origins', target, timeout, onTrace,
 					...(targetOrigin === undefined ? {} : { targetOrigin }) });
 			},
+			disposeClient() { client.dispose(); },
 			call(method, value) {
 				state.done = false;
 				client.stub[method](value).then(

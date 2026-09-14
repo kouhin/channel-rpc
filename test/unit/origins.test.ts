@@ -135,6 +135,70 @@ describe('client targetOrigin', () => {
 	});
 });
 
+describe('server source binding', () => {
+	test('filters other windows and null sources before origins, tracing, or handling the body', async () => {
+		const handler = { value: mock(() => 42) };
+		const onTrace = mock((_event: ChannelTraceEvent) => {});
+		new ChannelServer({ channelId, source: messages.source, allowOrigins: [clientOrigin], handler, onTrace }).start();
+		const request = {
+			type: requestType,
+			channelId,
+			payload: { jsonrpc: '2.0', method: 'value', id: 'bound' }
+		};
+		for (const source of [messages.target, null]) {
+			for (const origin of [clientOrigin, 'https://other.example', 'null']) {
+				expect(() => messages.emit(request, { source, origin })).not.toThrow();
+				expect(() => messages.emit({ ...request, payload: null }, { source, origin })).not.toThrow();
+			}
+		}
+		expect(handler.value).not.toHaveBeenCalled();
+		expect(onTrace).not.toHaveBeenCalled();
+		expect(messages.postResponse).not.toHaveBeenCalled();
+		expect(messages.postRequest).not.toHaveBeenCalled();
+
+		expect(() => messages.emit(request, { origin: 'https://other.example' })).toThrow('Invalid origin');
+		expect(handler.value).not.toHaveBeenCalled();
+		expect(onTrace).not.toHaveBeenCalled();
+		messages.emit(request);
+		await Promise.resolve();
+		expect(handler.value).toHaveBeenCalledTimes(1);
+		expect(messages.postResponse).toHaveBeenCalledWith(response('bound'), { targetOrigin: clientOrigin });
+		expect(onTrace.mock.calls.map(([event]) => event.event)).toEqual(['receive_request', 'send_response']);
+	});
+
+	test.each(['*', 'null'])('combines a fixed source with an allowlist containing %s', async (origin) => {
+		new ChannelServer({
+			channelId,
+			source: messages.source,
+			allowOrigins: [origin],
+			handler: { value: () => 42 }
+		}).start();
+		const request = { type: requestType, channelId, payload: { jsonrpc: '2.0', method: 'value', id: 'opaque' } };
+		messages.emit(request, { source: messages.target, origin: 'null' });
+		expect(messages.postRequest).not.toHaveBeenCalled();
+		messages.emit(request, { origin: 'null' });
+		await Promise.resolve();
+		expect(messages.postResponse).toHaveBeenCalledWith(response('opaque'), { targetOrigin: '*' });
+	});
+
+	test('retains its binding after stop and start', async () => {
+		const handler = { value: mock(() => 42) };
+		const server = new ChannelServer({ channelId, source: messages.source, handler });
+		const request = { type: requestType, channelId, payload: { jsonrpc: '2.0', method: 'value', id: 'restarted' } };
+		server.start();
+		server.stop();
+		messages.emit(request);
+		expect(handler.value).not.toHaveBeenCalled();
+		server.start();
+		messages.emit(request, { source: messages.target });
+		expect(handler.value).not.toHaveBeenCalled();
+		messages.emit(request);
+		await Promise.resolve();
+		expect(handler.value).toHaveBeenCalledTimes(1);
+		expect(messages.postResponse).toHaveBeenCalledWith(response('restarted'), { targetOrigin: clientOrigin });
+	});
+});
+
 describe('server reply origins', () => {
 	test.each([
 		['value', '2.0', undefined],

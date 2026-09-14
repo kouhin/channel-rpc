@@ -94,6 +94,77 @@ test('ignores forged replies from a same-origin sibling before tracing or handli
 	expect(errors).toEqual([]);
 });
 
+test('a bound server ignores requests from a same-origin sibling of its caller', async ({ page }) => {
+	const errors: string[] = [];
+	page.on('pageerror', (error) => errors.push(error.message));
+	const { peer, parentOrigin, childOrigin } = await openWindows(page);
+	await page.evaluate((origin) => {
+		window.rpcTest.startServer([origin], window.frames[0]);
+		const sibling = document.createElement('iframe');
+		sibling.name = 'sibling';
+		sibling.src = `${origin}/origins.html`;
+		document.body.append(sibling);
+	}, childOrigin);
+	await expect.poll(() => page.frame({ name: 'sibling' })?.url()).toBe(`${childOrigin}/origins.html`);
+	const sibling = page.frame({ name: 'sibling' });
+	if (!sibling) throw new Error('Sibling frame not found');
+	await sibling.waitForFunction(() => Boolean(window.rpcTest));
+	await sibling.evaluate(async () => {
+		for (const payload of [{ jsonrpc: '2.0', id: 'forged', method: 'wait' }, null]) {
+			parent.postMessage({ type: '@channel-rpc/REQUEST', channelId: 'origins', payload }, '*');
+		}
+		await window.rpcTest.flush(parent);
+	});
+	expect(await page.evaluate(() => window.rpcTest.waiting)).toBe(false);
+	expect(await page.evaluate(() => window.rpcTest.events)).toEqual([]);
+	expect(await sibling.evaluate(() => window.rpcTest.messages)).toEqual([]);
+	await peer.evaluate((origin) => {
+		window.rpcTest.startClient(parent, origin);
+		window.rpcTest.call('echo', 'bound caller');
+	}, parentOrigin);
+	await expect.poll(() => peer.evaluate(() => window.rpcTest.result)).toBe('bound caller');
+	expect(errors).toEqual([]);
+});
+
+test('disposes a pending iframe call, ignores its late reply, and supports a new client', async ({ page }) => {
+	const errors: string[] = [];
+	page.on('pageerror', (error) => errors.push(error.message));
+	const { peer, parentOrigin, childOrigin } = await openWindows(page);
+	await peer.evaluate((origin) => window.rpcTest.startServer([origin], parent), parentOrigin);
+	await page.evaluate((origin) => {
+		window.rpcTest.startClient(window.frames[0], origin);
+		window.rpcTest.call('wait');
+	}, childOrigin);
+	await peer.waitForFunction(() => window.rpcTest.waiting);
+	await page.evaluate(() => {
+		window.rpcTest.disposeClient();
+		window.rpcTest.disposeClient();
+	});
+	await expect.poll(() => page.evaluate(() => window.rpcTest.result)).toEqual(ChannelErrors.Disposed);
+	await peer.evaluate(async () => {
+		window.rpcTest.release('late result');
+		await Promise.resolve();
+		await window.rpcTest.flush(parent);
+	});
+	expect(await page.evaluate(() => window.rpcTest.messages.map((message) => message.data.payload))).toEqual([
+		{ jsonrpc: '2.0', id: await page.evaluate(() => window.rpcTest.requestId), result: 'late result' }
+	]);
+	expect(await page.evaluate(() => window.rpcTest.result)).toEqual(ChannelErrors.Disposed);
+	expect(await page.evaluate(() => window.rpcTest.events.map((event) => event.event))).toEqual(['send_request']);
+	await page.evaluate(async () => {
+		window.rpcTest.call('echo', 'after dispose');
+		await window.rpcTest.flush(window.frames[0]);
+	});
+	expect(await page.evaluate(() => window.rpcTest.result)).toEqual(ChannelErrors.Disposed);
+	expect(await peer.evaluate(() => window.rpcTest.messages.length)).toBe(1);
+	await page.evaluate((origin) => {
+		window.rpcTest.startClient(window.frames[0], origin);
+		window.rpcTest.call('echo', 'new client');
+	}, childOrigin);
+	await expect.poll(() => page.evaluate(() => window.rpcTest.result)).toBe('new client');
+	expect(errors).toEqual([]);
+});
+
 test('checks the origin even when a navigated target retains the same window identity', async ({ page }) => {
 	const { peer, parentOrigin, childOrigin } = await openWindows(page);
 	await peer.evaluate(() => window.rpcTest.startServer());

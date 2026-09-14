@@ -13,7 +13,10 @@ export function useChannel(target: WindowProxy) {
 		// @ts-expect-error CommonJS trace payloads also require narrowing.
 		event.payload.params;
 	};
-	const server = new rpc.ChannelServer({ channelId: 'consumer', handler, onTrace });
+	const server = new rpc.ChannelServer({ channelId: 'consumer', source: target, handler, onTrace });
+	new rpc.ChannelServer({ channelId: 'unbound', handler });
+	// @ts-expect-error source must be a window reference.
+	new rpc.ChannelServer({ channelId: 'invalid', source: 42 });
 	new rpc.ChannelClient<Handler>({ channelId: server.channelId, target });
 	// @ts-expect-error targetOrigin must be a string.
 	new rpc.ChannelClient<Handler>({ channelId: server.channelId, target, targetOrigin: 42 });
@@ -29,11 +32,13 @@ export function useChannel(target: WindowProxy) {
 	const sum: Promise<number> = remote.add(2, 3);
 	const greeting: Promise<string> = remote.greet('world');
 	const timeout: -32000 = rpc.ChannelErrors.Timeout.code;
+	const disposed: -32097 = rpc.ChannelErrors.Disposed.code;
 	// @ts-expect-error CommonJS consumers retain argument checking.
 	remote.add('2', 3);
 	// @ts-expect-error Only declared methods are available.
 	remote.missing();
 	// @ts-expect-error Remote calls always return a promise.
 	const synchronous: number = remote.add(2, 3);
-	return { sum, greeting, timeout, synchronous };
+	client.dispose();
+	return { sum, greeting, timeout, disposed, synchronous };
 }
